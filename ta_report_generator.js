@@ -6,7 +6,7 @@ s.setHours(-12, -s.getTimezoneOffset(), 0, 0); //removing the timezone offset.
 startDate = s.toISOString();
 
 var e = new Date();
-e.setHours(12, -s.getTimezoneOffset(), 0, 0); //removing the timezone offset.
+e.setHours(12, -e.getTimezoneOffset(), 0, 0); //removing the timezone offset.
 endDate = e.toISOString(); 
 
 var connection = new Mongo();
