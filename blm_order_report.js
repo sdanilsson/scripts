@@ -57,11 +57,7 @@ function generateReport(){
 		print(ord.barcode+"\t"+ord.frequency+"\t"+ord.type);
 	})
 
-	// for(var key in orders){
- 	//  		print(orders[key].barcode+"\t"+orders[key].frequency+"\t"+orders[key].type);
-	// }
-
-	//print(orders['BLM00012361'].frequency);
+	
 }
 
 function collectMediaIds(collectionName,obj){
@@ -81,7 +77,6 @@ function collectMediaIds(collectionName,obj){
 
 function processSegment(collectionName,obj){
 	// use the order id to find the dwf-segment id
-	
 	obj['e'] = /ravn.dwf-segment/;
 	ravnDB[collectionName].find(obj).forEach(function(document){
 		var dwfSegmentId = document['e'];
