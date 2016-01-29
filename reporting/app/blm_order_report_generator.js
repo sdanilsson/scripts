@@ -7,12 +7,7 @@ var url = 'mongodb://localhost:27017/ravn';
 
 // we need to get information on all orders, the information on the assets ordered, and the users that ordered.
 
-//var collection, db
-var orderPartIds = [];
-var mediaIds = [];
-var segmentIds = [];
-var orderIds = [];
-var userIds = [];
+var aggregate = [];
 
 async.series([
         function(callback) {
@@ -24,12 +19,11 @@ async.series([
             })
         },
         function(callback) {
-            var op = {};
-            op['v.status'] = 'completed';
-
             var orderPart = db.collection('ravn.orderpart');
+            var query = {};
+            query['v.status'] = 'completed';
 
-            orderPart.find(op, function(err, items) {
+            orderPart.find(query, function(err, items) {
                 items.count(function(err, count) {
                     var counter = 0;
                     items.forEach(function(item) {
@@ -37,7 +31,10 @@ async.series([
                         var orderPartId = item.v['id'];
                         counter++;
                         //console.log("order " + orderPartId);
-                        orderPartIds.push(orderPartId);
+                        var op = {};
+                        op['order_part'] = orderPartId;
+                        aggregate.push(op); 
+
                         if (counter === count) {
                             callback();
                         }
@@ -48,20 +45,32 @@ async.series([
         function(callback) {
             // Collect all the media ids.      
             var collection = db.collection('link');
-            var count = orderPartIds.length;
+            // find out how many ids we have, there is one per object in the aggregate list.
+            var count = aggregate.length;
             var counter = 0;
 
-            orderPartIds.forEach(function(orderPartId) {
+
+            // now for the tricky part
+            aggregate.forEach(function(op) {
                 var query = {};
-                query['s'] = "ravn.orderpart." + orderPartId;
+                query['s'] = "ravn.orderpart." + op.order_part;
                 query['e'] = /ravn.media/;
 
                 collection.find(query).nextObject(function(err, item) {
                     if (item !== null) {
                         var mediaId = item['e'].replace(/ravn.media./g, '');
                         //console.log(mediaId);
-                        mediaIds.push(mediaId);
-                    }
+                        op['media_id'] = mediaId;
+                        } //else {
+                    //     console.log("this orderpart id must be a dwf-segment");
+                    //     console.log(query['s']);
+                    //     // no in fact it is neither... the id is both an ravn.order, and a ravn.user-segment.
+                    //     // how should we deal with that?
+                    //     //db['link'].find({'s':'ravn.orderpart.fd47cc6e-22bd-430d-a0c2-6fadfb434f47'}).pretty()
+                    //     // that aside..
+                    //     // the problem now is that we have an orderpart but it may or may not contain a media id.
+                    //     // should we check if it is not a dwf-segment, if it is remove the object from the array?
+                    // }
                     counter++;
 
                     if (counter === count) {
@@ -73,19 +82,19 @@ async.series([
         function(callback) {
             // Process the dwf segment orders part 1, get the ids and push them to the segmentIds array;
             var collection = db.collection('link');
-            var count = orderPartIds.length;
+            var count = aggregate.length;
             var counter = 0;
 
-            orderPartIds.forEach(function(orderPartId) {
+            aggregate.forEach(function(op) {
                 var query = {};
-                query['s'] = "ravn.orderpart." + orderPartId;
+                query['s'] = "ravn.orderpart." + op.order_part;
                 query['e'] = /ravn.dwf-segment/;
 
                 collection.find(query).nextObject(function(err, item) {
                     if (item !== null) {
                         var mediaId = item['e'].replace(/ravn.dwf-segment./g, '');
                         //console.log(mediaId);
-                        segmentIds.push(mediaId);
+                        op['segment_id'] = mediaId;
                     }
                     counter++;
 
@@ -98,45 +107,51 @@ async.series([
         function(callback) {
             // Process the dwf-segment orders part 2, use the segmentIds array to find the linked media id.
             var collection = db.collection('link');
+            var segmentIds = aggregate.filter(function(op){
+                if(op.hasOwnProperty('segment_id')){
+                    return op;
+                }
+            });
             var count = segmentIds.length;
             var counter = 0;
 
-            segmentIds.forEach(function(segId) {
-                var query = {};
-                query['s'] = "ravn.dwf-segment." + segId;
-                query['e'] = /ravn.media/;
+            segmentIds.forEach(function(op) {
+                if (op.hasOwnProperty('segment_id')) {
+                    var query = {};
+                    query['s'] = "ravn.dwf-segment." + op.segment_id;
+                    query['e'] = /ravn.media/;
 
-                collection.find(query).nextObject(function(err, item) {
-                    if (item !== null) {
-                        var mediaId = item['e'].replace(/ravn.media./g, '');
-                        //console.log(mediaId);
-                        mediaIds.push(mediaId);
-                    }
+                    collection.find(query).nextObject(function(err, item) {
+                        if (item !== null) {
+                            var mediaId = item['e'].replace(/ravn.media./g, '');
+                            op['media_id'] = mediaId;
+                        }
 
-                    counter++;
+                        counter++;
 
-                    if (counter === count) {
-                        callback();
-                    }
-                });
+                        if (counter === count) {
+                            callback();
+                        }
+                    });
+                }
             });
         },
         function(callback) {
             // Find the users attached to the order ids.
             // Part 1 find the order id -- we may want to store the ordernumber at some point.
             var collection = db.collection('link');
-            var count = orderPartIds.length;
+            var count = aggregate.length;
             var counter = 0;
 
-            orderPartIds.forEach(function(orderPartId) {
+            aggregate.forEach(function(op) {
                 var query = {};
-                query['s'] = 'ravn.orderpart.' + orderPartId;
+                query['s'] = 'ravn.orderpart.' + op.order_part;
                 query['e'] = /ravn.order/;
 
                 collection.find(query).nextObject(function(err, item) {
                     if (item !== null) {
                         var orderId = item['e'].replace(/ravn.order./g, '');
-                        orderIds.push(orderId);
+                        op['order_id'] = orderId;
                     }
 
                     counter++;
@@ -152,18 +167,19 @@ async.series([
             //Part 2 look up the ravn.order in the link collection, to find the user id
             //db['link'].find({'s':'ravn.order.fc41e901-b8bb-43c1-9967-dc33a65d1476'}).pretty()
             var collection = db.collection('link');
-            var count = orderIds.length;
+            var count = aggregate.length;
             var counter = 0;
 
-            orderIds.forEach(function(orderId) {
+            aggregate.forEach(function(op) {
                 var query = {};
-                query['s'] = 'ravn.order.' + orderId;
+                query['s'] = 'ravn.order.' + op.order_id;
                 query['e'] = /ravn.user/;
 
                 collection.find(query).nextObject(function(err, item) {
                     if (item !== null) {
-                        var user = item['e'].replace(/ravn.user./g, '');
-                        userIds.push(user);
+                        var userId = item['e'].replace(/ravn.user./g, '');
+                        //console.log(userId);
+                        op['user_id'] = userId;
                     }
 
                     counter++;
@@ -179,17 +195,17 @@ async.series([
         function(callback) {
             // Part 3 look up ravn.user in the link collection
             var collection = db.collection('ravn.user');
-            var count = userIds.length;
+            var count = aggregate.length;
             var counter = 0;
 
-            userIds.forEach(function(userId) {
+            aggregate.forEach(function(op) {
                 var query = {};
-                query['v.id'] = userId;
-                
+                query['v.id'] = op.user_id;
+
                 collection.find(query).nextObject(function(err, item) {
                     if (item !== null) {
-                        var user = item['v'].username;
-                        console.log(user);
+                        var username = item['v'].username;
+                        op['user_name'] = username;    
                     }
 
                     counter++;
@@ -199,38 +215,48 @@ async.series([
                     }
 
                 });
+
             });
 
 
-        } //, function(callback){
-        //     // Part 4 finally look up the user name in the in ravn.user collection, and store it with the bacode asset/order object ... which I need to create.
-        // }
-        // function(callback){
-        //     // Now we all the mediaIds, so we call look up the information for the asset that was ordered.
-        //     //db['ravn.media'].find({'v.id':'0000994d-1544-4bf7-8e85-d58cc01fe860'},{'v.insight-metadata.barcode':1,'v.insight-metadata.title':1,'v.mediaType':1})
+        },
+        function(callback){
+            // Process the media ids and associate get barcode and mediatype to the order part.
+            //db['ravn.media'].find({'v.id':'0000994d-1544-4bf7-8e85-d58cc01fe860'},{'v.insight-metadata.barcode':1,'v.insight-metadata.title':1,'v.mediaType':1})
 
-        //     var collection = db.collection('ravn.media');
-        //     var count = mediaIds.length;
-        //     var counter = 0;
+            var collection = db.collection('ravn.media');
+            var count = aggregate.length;
+            var counter = 0;
 
-        //     mediaIds.forEach(function(id){
-        //         var query = {};
-        //         query['v.id'] = id;
+            aggregate.forEach(function(op){
+                 if(op.hasOwnProperty('media_id')){
+                    console.log(op.media_id);   
+                 }
+                 
+            });
+            
+            console.log(aggregate[1].order_part);
 
-        //         collection.find(query).nextObject(function(err, item){
-        //             var barcode = item.v['insight-metadata'].barcode;
-        //             var type = item.v['mediaType'];
+            //we have undefined mediaIds --- does that make any sense?
 
-        //             console.log(barcode+" "+type);
-        //             counter++;
+            // aggregate.forEach(function(op){
+            //     var query = {};
+            //     query['v.id'] = op.media_id;
 
-        //             if(counter === count){
-        //                 callback();
-        //             }
-        //         });
+            //     collection.find(query).nextObject(function(err, item){
+            //         var barcode = item.v['insight-metadata'].barcode;
+            //         var type = item.v['mediaType'];
 
-        //     });
-        // }
+            //         console.log(barcode+" "+type);
+            //         counter++;
+
+            //         if(counter === count){
+            //             callback();
+            //         }
+            //     });
+
+            // });
+       }
     ],
     function(error, results) {
         console.log('disconnect from DB');
