@@ -4,3 +4,5 @@
 reporting/node_modules
 reporting/npm-debug.log
 reporting/package.json
+*.xlsx
+*.csv
